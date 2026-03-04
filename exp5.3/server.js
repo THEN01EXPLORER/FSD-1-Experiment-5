@@ -1,4 +1,3 @@
-const { MongoMemoryServer } = require('mongodb-memory-server');
 const mongoose = require('mongoose');
 const express = require('express');
 const Product = require('./models/Product');
@@ -6,18 +5,26 @@ const Product = require('./models/Product');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-let mongoServer;
+// Vercel handles start logic for serverless functions,
+// but we need to ensure mongoose connects when the function is hit.
+let isConnected = false;
 
 async function setupDatabase() {
-    // Start the in-memory MongoDB instance
-    mongoServer = await MongoMemoryServer.create();
-    const MONGO_URI = mongoServer.getUri();
+    if (isConnected) {
+        return;
+    }
+
+    const MONGO_URI = process.env.MONGO_URI;
+    if (!MONGO_URI) {
+        throw new Error("Please define the MONGO_URI environment variable");
+    }
 
     // Connect to MongoDB
     await mongoose.connect(MONGO_URI);
-    console.log('Connected to In-Memory MongoDB.\n');
+    isConnected = true;
+    console.log('Connected to MongoDB Atlas.\n');
 
-    // Clean up existing data
+    // Clean up existing data to recreate it cleanly every time for the demo
     await Product.deleteMany({});
 
     const userIdObj = new mongoose.Types.ObjectId("65f4a8b7c1e6a8c1f4b8c7d1");
@@ -118,12 +125,26 @@ app.get('/', async (req, res) => {
     }
 });
 
-// Start the application
-setupDatabase().then(() => {
-    app.listen(PORT, () => {
-        console.log(`Server is running! Open http://localhost:${PORT} in your browser.`);
+// Start the application locally or export for Vercel
+if (process.env.NODE_ENV !== 'production') {
+    setupDatabase().then(() => {
+        app.listen(PORT, () => {
+            console.log(`Server is running! Open http://localhost:${PORT} in your browser.`);
+        });
+    }).catch(err => {
+        console.error('Failed to start server:', err);
     });
-}).catch(err => {
-    console.error('Failed to start server:', err);
-});
+} else {
+    // In production (Vercel), we initialize DB on every request if it isn't already
+    app.use(async (req, res, next) => {
+        try {
+            await setupDatabase();
+            next();
+        } catch (error) {
+            res.status(500).json({ error: "Database Connection Failed: " + error.message });
+        }
+    });
+}
+
+module.exports = app;
 
